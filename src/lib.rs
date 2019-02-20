@@ -1,16 +1,5 @@
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-#[macro_use]
-extern crate validator_derive;
-extern crate validator;
-extern crate serde;
-extern crate tokio_core;
-extern crate num_cpus;
-extern crate net2;
-extern crate hyper;
-extern crate futures;
-extern crate hyper_static;
+#[macro_use] extern crate serde_derive;
+#[macro_use] extern crate validator_derive;
 
 pub mod repo;
 
@@ -21,21 +10,14 @@ use std::fmt::{self, Display, Formatter};
 use futures::future::{self};
 use futures::{Future, Stream};
 
-use tokio_core::reactor::Core;
-use tokio_core::net::TcpListener;
-
-use hyper::{Request, Response, Body, StatusCode, Method};
-use hyper::server::conn::Http;
-use hyper::service::Service;
-
-use net2::TcpBuilder;
-use net2::unix::UnixTcpBuilderExt;
+use hyper::{Request, Response, Body, StatusCode, Server, Method};
+use hyper::service::{service_fn};
 
 use validator::{Validate};
 
 use repo::{Repo, Workshop};
 
-type ServiceResponse = Box<Future<Item=Response<Body>, Error=ServiceError> + Send + 'static>;
+type ServiceResponse = Box<Future<Item=Response<Body>, Error=ServiceError> + Send>;
 
 #[derive(Debug, Serialize)]
 struct ErrorMessage {
@@ -85,99 +67,77 @@ impl From<validator::ValidationErrors> for ServiceError {
     }
 }
 
-struct Application {
-    repo: Repo,
+fn index(_: Request<Body>) -> ServiceResponse {
+    let resp = Response::builder()
+        .header("Content-Type", "text/html")
+        .body(r#"<!doctype html>
+                 <meta charset="UTF-8">
+                 <div id="container"></div>
+                 <script src="/js/index.js" defer></script>"#.into()).unwrap();
+    Box::new(future::ok(resp))
 }
 
-impl Application {
-    fn index(&self, _: Request<Body>) -> ServiceResponse {
-        let resp = Response::builder()
-            .header("Content-Type", "text/html")
-            .body(r#"<!doctype html>
-                     <meta charset="UTF-8">
-                     <div id="container"></div>
-                     <script src="/js/index.js" defer></script>"#.into()).unwrap();
-        Box::new(future::ok(resp))
-    }
-
-    fn workshops(&self, _: Request<Body>) -> ServiceResponse {
-        let workshops = self.repo.list();
-        let resp = Self::new_response(workshops, StatusCode::OK);
-        Box::new(future::ok(resp))
-    }
-
-    fn create_workshop(&self, req: Request<Body>) -> ServiceResponse {
-        let repo = self.repo.clone();
-        Box::new(req.into_body().concat2().map_err(|e| e.into()).and_then(|bytes| {
-            future::result(serde_json::from_slice::<Workshop>(&bytes).map_err(|e| e.into()))
-        }).and_then(|workshop| {
-            future::result(workshop.validate().map(|_| workshop).map_err(|e| e.into()))
-        }).map(move |workshop| {
-            repo.insert(workshop.clone());
-            Self::new_response(workshop, StatusCode::CREATED)
-        }))
-    }
-
-    fn new_response<T>(body: T, status: StatusCode) -> Response<Body>
-            where T: serde::ser::Serialize {
-        let body = serde_json::to_string(&body).unwrap();
-        Response::builder()
-            .header("Content-Type", "application/json")
-            .status(status)
-            .body(body.into())
-            .unwrap()
-    }
+fn workshops(_: Request<Body>, repo: Repo) -> ServiceResponse {
+    let workshops = repo.list();
+    let resp = new_response(workshops, StatusCode::OK);
+    Box::new(future::ok(resp))
 }
 
-impl Service for Application {
-    type ReqBody = Body;
-    type ResBody = Body;
-    type Error = ServiceError;
-    type Future = ServiceResponse;
+fn create_workshop(req: Request<Body>, repo: Repo) -> ServiceResponse {
+    let repo = repo.clone();
+    Box::new(req.into_body().concat2().map_err(|e| e.into()).and_then(|bytes| {
+        future::result(serde_json::from_slice::<Workshop>(&bytes).map_err(|e| e.into()))
+    }).and_then(|workshop| {
+        future::result(workshop.validate().map(|_| workshop).map_err(|e| e.into()))
+    }).map(move |workshop| {
+        repo.insert(workshop.clone());
+        new_response(workshop, StatusCode::CREATED)
+    }))
+}
 
-    fn call(&mut self, req: Request<Self::ReqBody>) -> Self::Future {
-        let resp = match (req.method(), req.uri().path()) {
-            (&Method::GET, "/workshops") => self.workshops(req),
-            (&Method::POST, "/workshops") => self.create_workshop(req),
-            (&Method::GET, _) if req.uri().path().starts_with("/js/") => {
-                Box::new(hyper_static::from_dir("dist", req).map_err(|e| e.into()))
-            },
-            _ => self.index(req),
+fn new_response<T>(body: T, status: StatusCode) -> Response<Body>
+        where T: serde::ser::Serialize {
+    let body = serde_json::to_string(&body).unwrap();
+    Response::builder()
+        .header("Content-Type", "application/json")
+        .status(status)
+        .body(body.into())
+        .unwrap()
+}
+
+fn handle_request(req: Request<Body>, repo: Repo) -> ServiceResponse {
+    let resp = match (req.method(), req.uri().path()) {
+        (&Method::GET, "/workshops") => workshops(req, repo),
+        (&Method::POST, "/workshops") => create_workshop(req, repo),
+        (&Method::GET, _) if req.uri().path().starts_with("/js/") => {
+            Box::new(hyper_static::from_dir("dist", req).map_err(|e| e.into()))
+        },
+        _ => index(req),
+    };
+
+    Box::new(resp.or_else(|err| Ok(match err {
+        ServiceError::Serde(m) | ServiceError::Validator(m) =>
+            new_response(m, StatusCode::BAD_REQUEST),
+        ServiceError::Hyper(m) =>
+            new_response(m, StatusCode::INTERNAL_SERVER_ERROR),
+    })))
+}
+
+pub fn serve(addr: SocketAddr, repo: Repo) {
+    hyper::rt::run(future::lazy(move || {
+        let new_service = move || {
+            let repo_inner = repo.clone();
+            service_fn(move |req| {
+                handle_request(req, repo_inner.clone())
+            })
         };
 
-        Box::new(resp.or_else(|err| Ok(match err {
-            ServiceError::Serde(m) | ServiceError::Validator(m) =>
-                Self::new_response(m, StatusCode::BAD_REQUEST),
-            ServiceError::Hyper(m) =>
-                Self::new_response(m, StatusCode::INTERNAL_SERVER_ERROR),
-        })))
-    }
-}
+        let server = Server::bind(&addr)
+            .serve(new_service)
+            .map_err(|e| eprintln!("server error: {}", e));
 
-pub fn serve(addr: SocketAddr, repo: &Repo) {
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
-    let http = Http::new();
+        println!("Listening on http://{}", addr);
 
-    let tcp = TcpBuilder::new_v4()
-        .unwrap()
-        .reuse_port(true)
-        .unwrap()
-        .reuse_address(true)
-        .unwrap()
-        .bind(&addr)
-        .unwrap()
-        .listen(1024)
-        .unwrap();
-
-    let listener = TcpListener::from_listener(tcp, &addr, &handle).unwrap();
-    let server = listener.incoming().for_each(move |(socket, _)| {
-        let conn = http.serve_connection(socket, Application {
-            repo: repo.clone(),
-        }).map_err(|_| ());
-        handle.spawn(conn);
-        Ok(())
-    });
-
-    core.run(server).unwrap()
+        server
+    }))
 }
