@@ -4,7 +4,7 @@
     "module": "commonjs",
     "jsx": "react",
     "jsxFactory": "h",
-    "noImplicitAny": true,
+    //"noImplicitAny": true,
     "noUnusedLocals": true,
     //"strictNullChecks": true,
     "moduleResolution": "node",

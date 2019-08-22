@@ -1,4 +1,4 @@
-import {Dispatch, Subscription} from 'hyperapp'
+import {Dispatch} from 'hyperapp'
 
 const parseJson = (resp: Response) => resp.json()
 
@@ -16,7 +16,14 @@ const checkStatus = (resp: Response): Response | Promise<any> => {
   throw new Error(resp.statusText)
 }
 
-function fetchEffect(props: Subscription, dispatch: Dispatch) {
+interface Props {
+  action: any,
+  url: string,
+  error?: any,
+  opts?: any,
+}
+
+export const fetch = (dispatch: Dispatch, props: Props) => {
   window.fetch(props.url, props.opts)
     .then(checkStatus)
     .then(parseJson)
@@ -26,18 +33,3 @@ function fetchEffect(props: Subscription, dispatch: Dispatch) {
       throw e
     })
 }
-
-interface Props {
-  action: any,
-  url: string,
-  error?: any,
-  opts?: any,
-}
-
-export const fetch = (props: Props) => ({
-  effect: fetchEffect,
-  action: props.action,
-  error: props.error,
-  url: props.url,
-  opts: props.opts,
-})

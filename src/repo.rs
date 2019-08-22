@@ -4,10 +4,10 @@ use validator::{Validate};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct Workshop {
-    #[validate(length(min = "3"))]
+    #[validate(length(min = 3))]
     pub name: String,
     pub description: String,
-    #[validate(length(min = "1"))]
+    #[validate(length(min = 1))]
     pub instructor: String,
     pub price: i64,
 }

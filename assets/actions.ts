@@ -14,7 +14,7 @@ export const ErrorDismiss = (state: State) => ({...state, error: ''})
 
 export const CreateWorkshop = (state: State) => [
   {...state, showModal: false},
-  Http.fetch({
+  [Http.fetch, {
     url: '/workshops',
     opts: {
       method: 'POST',
@@ -22,13 +22,11 @@ export const CreateWorkshop = (state: State) => [
     },
     action: AddWorkshop,
     error: GenericError,
-  })
+  }],
 ]
 
-const getValue = (e: Event) => {
-  const value = (e.target as HTMLInputElement).value
-  return value.trim()
-}
+const getValue = (e: Event) =>
+  (e.target as HTMLInputElement).value.trim()
 
 export const UpdateNewWorkshopName = (state: State, e: Event) =>
   ({...state, newWorkshop: {...state.newWorkshop, name: getValue(e)}})

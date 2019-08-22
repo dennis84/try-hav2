@@ -42,18 +42,18 @@ const view = (state: State): VNode => (
     error={state.error} />
 )
 
-const container = document.getElementById('container')
+const node = document.getElementById('container')
 
 app({
   init,
   view,
   subscriptions: (state: State) => [
-    Http.fetch({
+    [Http.fetch, {
       url: '/workshops',
       action: UpdateWorkshops,
-    }),
+    }],
   ],
-  container,
+  node,
 })
 
 insertCss(freestyle.getStyles())
