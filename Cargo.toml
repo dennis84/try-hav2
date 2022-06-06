@@ -16,4 +16,4 @@ hyper-static = { git = "https://github.com/dennis84/hyper-static.git" }
 
 [dev-dependencies]
 time = "0.1.40"
-tokio = "0.1"
+tokio = "1.8"
